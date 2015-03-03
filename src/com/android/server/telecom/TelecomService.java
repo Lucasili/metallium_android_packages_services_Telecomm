@@ -443,24 +443,13 @@ public class TelecomService extends Service {
         public boolean hasVoiceMailNumber(PhoneAccountHandle accountHandle) {
             enforceReadPermissionOrDefaultDialer();
             try {
-                return !TextUtils.isEmpty(getVoiceMailNumberInternal(accountHandle));
-            } catch (Exception e) {
-                Log.e(this, e, "getSubscriptionIdForPhoneAccount");
-                throw e;
-            }
-        }
+                if (!isVisibleToCaller(accountHandle)) {
+                    Log.w(this, "%s is not visible for the calling user", accountHandle);
+                    return false;
+                }
 
-        /**
-         * @see android.telecom.TelecomManager#getVoiceMailNumber
-         */
-        @Override
-        public String getVoiceMailNumber(PhoneAccountHandle accountHandle) {
-            if (!isCallerSystemApp()) {
-                throw new SecurityException(
-                        "Only system apps are allowed to call getVoiceMailNumber()");
-            }
-            try {
-                return getVoiceMailNumberInternal(accountHandle);
+                int subId = mPhoneAccountRegistrar.getSubscriptionIdForPhoneAccount(accountHandle);
+                return !TextUtils.isEmpty(getTelephonyManager().getVoiceMailNumber(subId));
             } catch (Exception e) {
                 Log.e(this, e, "getSubscriptionIdForPhoneAccount");
                 throw e;
@@ -754,16 +743,6 @@ public class TelecomService extends Service {
     //
     // Supporting methods for the ITelecomService interface implementation.
     //
-
-    private String getVoiceMailNumberInternal(PhoneAccountHandle accountHandle) {
-        if (!isVisibleToCaller(accountHandle)) {
-            Log.w(this, "%s is not visible for the calling user", accountHandle);
-            return null;
-        }
-
-        int subId = mPhoneAccountRegistrar.getSubscriptionIdForPhoneAccount(accountHandle);
-        return getTelephonyManager().getVoiceMailNumber(subId);
-    }
 
     private boolean isVisibleToCaller(PhoneAccountHandle accountHandle) {
         if (accountHandle == null) {
