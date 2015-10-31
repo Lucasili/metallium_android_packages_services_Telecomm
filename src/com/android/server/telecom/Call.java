@@ -55,6 +55,13 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import android.provider.Settings;
+import android.provider.MediaStore;
+import android.media.RingtoneManager;
+import android.provider.ContactsContract.Data;
+import android.provider.ContactsContract.CommonDataKinds.GroupMembership;
+import android.database.Cursor;
+
 /**
  *  Encapsulates all aspects of a given phone call throughout its lifecycle, starting
  *  from the time the call intent was received by Telecom (vs. the time the call was
@@ -1098,7 +1105,25 @@ final class Call implements CreateConnectionResponse {
     }
 
     Uri getRingtone() {
-        return mCallerInfo == null ? null : mCallerInfo.contactRingtoneUri;
+        Log.w(this ,"Call.getRingtone().");
+        if (mCallerInfo != null) {Log.w(this ,"Name "+ mCallerInfo.name);} else {Log.w(this ,"CALLERINFO=NULL");}
+        Uri l_RingtoneUri=null;
+        if (mCallerInfo != null) {
+            if (mCallerInfo != null) {Log.w(this ,"R-URI "+ mCallerInfo.contactRingtoneUri);} else {Log.w(this ,"contactRingtoneUri=NULL");}
+            l_RingtoneUri=mCallerInfo.contactRingtoneUri;
+            if (l_RingtoneUri==null) {
+                    Log.w(this ,"L-URI "+ l_RingtoneUri);
+                    String Group_tone=getGroupCustomRingtone(mContext,mCallerInfo.contactIdOrZero);
+                    if("".equals(Group_tone)==false)
+                    {
+                        Log.w(this ,"group ringtone found, setting up ringer.");
+                        Uri groupRingtone=Uri.parse(Group_tone);
+                        if(groupRingtone!=null) l_RingtoneUri=groupRingtone;
+                    }
+                }
+                else {Log.w(this ,"L-URI NOT NULL" + l_RingtoneUri);}
+        }
+        return l_RingtoneUri;
     }
 
     void onPostDialWait(String remaining) {
@@ -1588,4 +1613,111 @@ final class Call implements CreateConnectionResponse {
             l.onCallSubstateChanged(this);
         }
     }
+
+    private String getGroupCustomRingtone(Context context, long contact_id) {
+        long group_id=0;
+        String Ringtone="";
+        String lRingtone="";
+        String lGroupRingtone="";
+        Log.w(this, "getGroupCustomRingtone " + String.valueOf(contact_id));
+        lGroupRingtone = Settings.System.getString(context.getContentResolver(),Settings.System.GROUP_RINGTONE);
+        Log.w(this, "Group ringtone read " + lGroupRingtone);
+        Cursor cursor = context.getContentResolver().query(Contacts.CONTENT_URI,
+                null,
+                Contacts._ID
+                   + "="
+                   + contact_id,
+                   null,
+                   null);
+       if (cursor != null && cursor.getCount() >0)
+       {
+           Log.w(this, "Query on contacts db done!");
+           cursor.moveToFirst();
+           long raw_contact_id= cursor.getLong(cursor.getColumnIndex(Contacts.NAME_RAW_CONTACT_ID));
+           cursor.close();
+           
+           cursor = context.getContentResolver().query(Data.CONTENT_URI,
+                null,
+                Data.RAW_CONTACT_ID
+                   + "="
+                   + raw_contact_id
+                   + " AND "
+                   + Data.MIMETYPE
+                   + "='"
+                   + GroupMembership.CONTENT_ITEM_TYPE
+                   + "'",
+                   null,
+                   Data.DATA1);
+           if (cursor != null && cursor.getCount() >0)
+           {
+               Log.w(this, "Contact belongs to a group.");
+               if(lGroupRingtone.isEmpty()==false)
+               {
+                   while(cursor.moveToNext())
+                   {
+                       group_id= cursor.getLong(cursor.getColumnIndex(Data.DATA1));
+                       String splitted[]=lGroupRingtone.split("\\|");
+                       for(int i=0; i<splitted.length; i++)
+                       {
+                           String vals[]=splitted[i].split("§");
+                           if(vals[0].compareTo(String.format("GROUP_%d",group_id))==0) {lRingtone=vals[1];break;}
+                       }
+                   }
+               }
+               cursor.close();
+           }
+           Log.w(this, "Contact doesn't belongs to any group.");
+           if(lRingtone.isEmpty()==true)
+           {
+               Log.w(this, "No ringtone for the group; trying with ringtone for contact in contacts list.");
+               if(lGroupRingtone.isEmpty()==false)
+               {
+                   String splitted[]=lGroupRingtone.split("\\|");
+                   for(int i=0; i<splitted.length; i++)
+                   {
+                       String vals[]=splitted[i].split("§");
+                       if(vals[0].compareTo("GROUP_0")==0) {lRingtone=vals[1];break;}
+                   }
+               }
+           }
+           Uri finalSuccessfulUri=null;
+           if(lRingtone.isEmpty()==false)
+           {
+               String vals2[]=lRingtone.split("@");
+               Uri uriRingtone = MediaStore.Audio.Media.getContentUriForPath(vals2[0]);
+               String suri=uriRingtone.toString();
+               if(suri.contains(vals2[1])==false)
+               {
+                     if(vals2[1].compareTo("internal")==0) suri=suri.replace("external","internal");
+                     else suri=suri.replace("internal","external");
+                     uriRingtone=Uri.parse(suri);
+               }
+               Log.w(this,"ringtone (group or generic) found.");
+               Log.w(this,lRingtone);
+               //Uri uriRingtone = MediaStore.Audio.Media.getContentUriForPath(lRingtone);
+               RingtoneManager rm = new RingtoneManager(context); 
+               Cursor cursor_rm = rm.getCursor();
+               cursor_rm.moveToFirst();
+               while(!cursor_rm.isAfterLast()) {
+                     if(vals2[0].compareToIgnoreCase(cursor_rm.getString(cursor_rm.getColumnIndex(MediaStore.MediaColumns.TITLE))) == 0) {
+                           int ringtoneID = cursor_rm.getInt(cursor_rm.getColumnIndex(MediaStore.MediaColumns._ID));
+                           finalSuccessfulUri = Uri.withAppendedPath(uriRingtone, "" + ringtoneID );
+                           break;
+                      }
+                      cursor_rm.moveToNext();
+               }
+               cursor_rm.close();
+               if(finalSuccessfulUri!=null)
+               {
+                      Ringtone=finalSuccessfulUri.toString();
+               }
+           }
+       }
+       else
+       {
+           Log.w(this, "Query on contacts db FAILED!");
+       }
+       return Ringtone;
+    }
+
 }
